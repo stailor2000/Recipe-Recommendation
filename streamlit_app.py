@@ -1,10 +1,11 @@
 import sqlite3
 import streamlit as st
 import pandas as pd
-from collections import Counter
+from utils import count_unique_vals
 
-# Determine the common ingredients everyone tends to have in their house
-common_ingredients = [
+
+# Define a list of common ingredients typically available at home
+COMMON_INGREDIENTS = [
     "Salt",
     "Soy Sauce",
     "Sugar",
@@ -23,182 +24,160 @@ common_ingredients = [
 ]
 
 
-def count_unique_vals(df, column_name):
-    # Flatten all words into a single list
-    all_unique_values = [
-        value.strip()  # Strip any extra spaces from ingredients
-        for column_values in df[column_name]  # Iterate over the rows in the column
-        for value in column_values  # Iterate over each ingredient in the list
-        if value is not None  # Skip None values
+def load_recipe_data(db_path="./data/standardised_recipes.db"):
+    """
+    Loads recipe data from an SQLite database and preprocesses the recipe DataFrame by converting specific columns to lists.
+
+    Parameters:
+        db_path (str): Path to the SQLite database.
+
+    Returns:
+        pd.DataFrame: DataFrame containing recipe data.
+    """
+    conn = sqlite3.connect(db_path)
+    query = "SELECT * FROM recipes"
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+
+    df["normalised_ingredients"] = df["normalised_ingredients"].apply(
+        lambda x: [ingredient.strip() for ingredient in x.split(";")]
+    )
+    df["course"] = df["course"].apply(
+        lambda x: [course.strip() for course in x.split(",")]
+    )
+    df["cuisine"] = df["cuisine"].apply(
+        lambda x: [cuisine.strip() for cuisine in x.split(",")]
+    )
+    return df
+
+
+def filter_recipes(df, cuisines, courses, max_time, ingredients, missing_count):
+    """
+    Filters the recipes based on user criteria.
+
+    Parameters:
+        df (pd.DataFrame): The DataFrame containing recipes.
+        cuisines (list): Selected cuisines.
+        courses (list): Selected courses.
+        max_time (int): Maximum cooking time in minutes.
+        ingredients (list): Ingredients the user has at home.
+        missing_count (int): Maximum number of missing ingredients.
+
+    Returns:
+        tuple: Two DataFrames (recipes with all ingredients, recipes with missing ingredients).
+    """
+    all_ingredients_df = df[
+        df["cuisine"].apply(lambda x: any(cuisine in x for cuisine in cuisines))
+        & df["course"].apply(lambda x: any(course in x for course in courses))
+        & (df["total_time_minutes"] <= max_time)
+        & df["normalised_ingredients"].apply(
+            lambda ing: all(ingredient in ingredients for ingredient in ing)
+        )
     ]
 
-    # Count occurrences of each unique ingredient
-    unique_counts = Counter(all_unique_values)
-
-    return unique_counts
-
-
-# Retrieve recipes data from db
-conn = sqlite3.connect("./data/standardised_recipes.db")
-query = "SELECT * FROM recipes"
-df_recipes = pd.read_sql_query(query, conn)
-conn.close()
-
-# Convert the 'normalised_ingredients', 'cuisine' and 'course' columns from string to list
-df_recipes["normalised_ingredients"] = df_recipes["normalised_ingredients"].apply(
-    lambda x: [ingredient.strip() for ingredient in x.split(";")]
-)
-df_recipes["course"] = df_recipes["course"].apply(
-    lambda x: [course.strip() for course in x.split(",")]
-)
-df_recipes["cuisine"] = df_recipes["cuisine"].apply(
-    lambda x: [cuisine.strip() for cuisine in x.split(",")]
-)
-
-# Create a list of the unique values for 'normalised_ingredients', 'cuisine' and 'course' columns
-unique_cuisine = list(count_unique_vals(df_recipes, "cuisine").keys())
-unique_course = list(count_unique_vals(df_recipes, "course").keys())
-unique_ingredients = list(
-    count_unique_vals(df_recipes, "normalised_ingredients").keys()
-)
-
-# Create a Streamlit app
-st.set_page_config(layout="wide")
-st.title("Asian Recipe Recommendation")
-
-
-# Expander for search and filter options
-with st.expander("Search and Filter", expanded=True):
-    # Allows user to choose the cuisine they want
-    selection_cuisine = st.pills(
-        "Select Cuisines:", unique_cuisine, selection_mode="multi"
-    )
-
-    # Allows user to choose the type of meal they'd like
-    selection_course = st.pills(
-        "Select Courses:", unique_course, selection_mode="multi"
-    )
-
-    # Allows users to select maximum time the recipe takes to cook
-
-    selection_time = st.number_input(
-        "How long can you spend cooking [minutes]?:", 0, 10000
-    )
-
-    # Create a separate DataFrame for recipes that the user can make with up to `missing_count` missing ingredients
-    missing_count = st.number_input(
-        "Give the maximum number of ingredients that can be missing from a recipe:",
-        min_value=0,
-        max_value=5,
-        step=1,
-        value=0,
-    )
-
-    selection_ingredients = st.multiselect(
-        "Input the ingredients you have at home: ",
-        unique_ingredients,
-        default=common_ingredients,
-    )
-
-
-# Filter the DataFrame to get recipes with all ingredients
-filtered_data = df_recipes[
-    df_recipes["cuisine"].apply(
-        lambda x: any(cuisine in x for cuisine in selection_cuisine)
-    )
-    & df_recipes["course"].apply(
-        lambda x: any(course in x for course in selection_course)
-    )
-    & (df_recipes["total_time_minutes"] <= selection_time)
-    & df_recipes["normalised_ingredients"].apply(
-        lambda ingredients: all(
-            ingredient in selection_ingredients for ingredient in ingredients
+    missing_ingredients_df = df[
+        df["cuisine"].apply(lambda x: any(cuisine in x for cuisine in cuisines))
+        & df["course"].apply(lambda x: any(course in x for course in courses))
+        & (df["total_time_minutes"] <= max_time)
+        & df["normalised_ingredients"].apply(
+            lambda ing: 0
+            < sum(1 for ingredient in ing if ingredient not in ingredients)
+            <= missing_count
         )
-    )
-]
+    ]
+
+    return all_ingredients_df, missing_ingredients_df
 
 
-# # # Display the data in a table
-# st.write("Data from SQL Database:")
-# st.write(filtered_data)
+def populate_recipes(df, ingredients, missing=False):
+    """
+    Displays recipes in a grid format, showing images and details.
 
-
-# Filter for recipes that the user can make with up to `missing_count` missing ingredients
-missing_ingredients_df = df_recipes[
-    df_recipes["cuisine"].apply(
-        lambda x: any(cuisine in x for cuisine in selection_cuisine)
-    )
-    & df_recipes["course"].apply(
-        lambda x: any(course in x for course in selection_course)
-    )
-    & (df_recipes["total_time_minutes"] <= selection_time)
-    & df_recipes["normalised_ingredients"].apply(
-        lambda ingredients: 0
-        < sum(
-            1 for ingredient in ingredients if ingredient not in selection_ingredients
-        )
-        <= missing_count
-    )
-]
-
-# # Display the filtered DataFrame
-# st.write(f"Recipes with up to {missing_count} missing ingredients:")
-# st.dataframe(missing_ingredients_df)
-
-
-########
-
-tab_names = ["Recipes with all ingredients available"]
-
-
-if missing_count != 0:
-    tab_names.append("Recipes with missing ingredients")
-
-
-def populate_recipes(df, missing=False):
-    # Number of recipes per row
+    Parameters:
+        df (pd.DataFrame): The DataFrame containing recipe data.
+        ingredients (list): User-selected ingredients.
+        missing (bool): Whether to display missing ingredients.
+    """
     num_recipes_per_row = 2
-
-    # Display recipes in a two-per-row layout
     for i in range(0, len(df), num_recipes_per_row):
-        cols = st.columns(num_recipes_per_row)  # Create columns for the current row
+        cols = st.columns(num_recipes_per_row)
         for j, col in enumerate(cols):
-            if i + j < len(df):  # Ensure we don't go out of bounds
+            if i + j < len(df):
                 recipe = df.iloc[i + j]
                 with col:
-                    # Create a layout with two columns: image on the left, details on the right
                     image_col, text_col = st.columns([1, 2])
 
-                    # Image column
                     with image_col:
                         st.image(recipe["image_url"], use_container_width=True)
 
-                    # Text column
                     with text_col:
-                        # st.subheader(recipe["title"])  # Recipe title
-
                         st.markdown(f"#### [{recipe['title']}]({recipe['link']})")
-                        st.write(recipe["description"])  # Recipe description
+                        st.write(recipe["description"])
 
                         if missing:
                             missing_items = [
                                 item
                                 for item in recipe["normalised_ingredients"]
-                                if item not in selection_ingredients
+                                if item not in ingredients
                             ]
-                            ingredients_str = ", ".join(missing_items)
-                            st.write(f"Missing ingredients: {ingredients_str}")
+                            st.write(f"Missing ingredients: {', '.join(missing_items)}")
 
 
-if not filtered_data.empty or not missing_ingredients_df.empty:
-    if tab_names:
-        tab_objects = st.tabs(tab_names)
+if __name__ == "__main__":
+    # Load and preprocess data
+    df_recipes = load_recipe_data()
 
-        # Populate each tab with its content
-        for tab, name in zip(tab_objects, tab_names):
-            if name == tab_names[0]:
+    # Extract unique values
+    unique_cuisine = list(count_unique_vals(df_recipes, "cuisine").keys())
+    unique_course = list(count_unique_vals(df_recipes, "course").keys())
+    unique_ingredients = list(
+        count_unique_vals(df_recipes, "normalised_ingredients").keys()
+    )
+
+    # Set up Streamlit app
+    st.set_page_config(layout="wide")
+    st.title("Asian Recipe Recommendation")
+
+    with st.expander("Search and Filter", expanded=True):
+        selection_cuisine = st.pills(
+            "Select Cuisines:", unique_cuisine, selection_mode="multi"
+        )
+        selection_course = st.pills(
+            "Select Courses:", unique_course, selection_mode="multi"
+        )
+        selection_time = st.number_input(
+            "Maximum cooking time [minutes]:", min_value=0, max_value=10000, step=1
+        )
+        missing_count = st.number_input(
+            "Maximum number of missing ingredients:", min_value=0, max_value=5, step=1
+        )
+        selection_ingredients = st.multiselect(
+            "Input ingredients you have at home:",
+            unique_ingredients,
+            default=COMMON_INGREDIENTS,
+        )
+
+    # Filter recipes
+    filtered_data, missing_data = filter_recipes(
+        df_recipes,
+        selection_cuisine,
+        selection_course,
+        selection_time,
+        selection_ingredients,
+        missing_count,
+    )
+
+    # Display tabs
+    if not filtered_data.empty or not missing_data.empty:
+        tab_names = ["Recipes with all ingredients available"]
+        if missing_count > 0:
+            tab_names.append("Recipes with missing ingredients")
+
+        tabs = st.tabs(tab_names)
+        for tab, name in zip(tabs, tab_names):
+            if name == "Recipes with all ingredients available":
                 with tab:
-                    populate_recipes(filtered_data)
+                    populate_recipes(filtered_data, selection_ingredients)
             else:
                 with tab:
-                    populate_recipes(missing_ingredients_df, missing=True)
+                    populate_recipes(missing_data, selection_ingredients, missing=True)
