@@ -3,7 +3,7 @@
 This project is a recipe recommendation system that suggests Asian recipes based on ingredients that the user has available at home. The app is deployed on [Streamlit Cloud](https://asian-recipe-recommendation.streamlit.app/) and is available for the public to use.
 
 ![](./images/img1.png)
-![](./images/img2.png)
+![](./images/recipes.png)
 
 ## Features
 
