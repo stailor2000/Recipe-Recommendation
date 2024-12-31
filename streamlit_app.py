@@ -138,6 +138,12 @@ if __name__ == "__main__":
     st.set_page_config(layout="wide")
     st.title("Asian Recipe Recommendation")
 
+    st.write(
+        """
+        This app helps you find delicious Asian recipes based on the ingredients you have at home. Simply input the ingredients available in your kitchen, select your preferred cuisines and courses, and let the app recommend recipes that match your ingredients. You can also filter recipes based on maximum cooking time and the number of missing ingredients, making it easy to find the perfect dish, even if you're missing a few items.
+        """
+    )
+
     with st.expander("Search and Filter", expanded=True):
         selection_cuisine = st.pills(
             "Select Cuisines:", unique_cuisine, selection_mode="multi"
