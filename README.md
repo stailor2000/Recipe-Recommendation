@@ -4,7 +4,6 @@ This project is a recipe recommendation system that suggests Asian recipes based
 
 ![](./images/img1.png)
 ![](./images/img2.png)
-![](./images/img3.png)
 
 ## Features
 
